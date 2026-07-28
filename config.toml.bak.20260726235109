@@ -1,0 +1,77 @@
+[plugin]
+name = "麦麦绘卷"
+config_version = "4.2.0"
+enabled = true
+
+[basic]
+command_prefix = "/dr"
+default_model = "model1"
+enable_unified_generation = true
+enable_pic_command = true
+enable_pic_config = true
+enable_pic_style = true
+pic_command_model = "model1"
+admin_users = []
+max_retries = 2
+enable_debug_info = false
+enable_verbose_debug = false
+cache_enabled = true
+cache_max_size = 10
+auto_recall_enabled = false
+prompt_optimizer_enabled = true
+llm_task_name = "utils"
+
+[selfie]
+enabled = true
+reference_image_path = "images/reference.jpg"
+prompt_prefix = ""
+negative_prompt = ""
+schedule_enabled = true
+default_style = "standard"
+auto_enabled = false
+interval_minutes = 120
+selfie_model = "model1"
+quiet_hours_start = "00:00"
+quiet_hours_end = "07:00"
+caption_enabled = true
+
+[proxy]
+enabled = false
+url = "http://127.0.0.1:7890"
+timeout = 60
+
+[[styles.items]]
+name = "cartoon"
+aliases = "卡通,动漫"
+prompt = "cartoon style, anime style, colorful, vibrant colors, clean lines"
+
+[[styles.items]]
+name = "watercolor"
+aliases = "水彩"
+prompt = "watercolor painting style, soft colors, artistic"
+
+[[models.items]]
+id = "model1"
+name = "gpt-image-2 (NewAPI)"
+base_url = "https://api.wenxi.dev/v1"
+api_key = "Bearer ***REMOVED-API-KEY***"
+format = "openai"
+model = "gpt-image-2"
+fixed_size_enabled = true
+default_size = "1024x1024"
+seed = -1
+guidance_scale = 2.5
+num_inference_steps = 20
+watermark = false
+custom_prompt_add = ""
+negative_prompt_add = ""
+artist = ""
+support_img2img = true
+auto_recall_delay = 0
+cfg = 0.0
+sampler = "k_euler_ancestral"
+nocache = 0
+noise_schedule = "karras"
+endpoint_path = ""
+dashscope_async = false
+prompt_extend = true
