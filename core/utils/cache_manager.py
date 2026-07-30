@@ -17,8 +17,11 @@ class CacheManager:
         self.log_prefix = action_instance.log_prefix
 
     def _get_max_size(self) -> int:
-        """获取最大缓存数量配置"""
-        return self.action.get_config("basic.cache_max_size", 10)
+        """获取最大缓存数量配置。
+
+        默认 3：单条常为整图 base64（0.5–2MB），10 条峰值可到十几 MB。
+        """
+        return self.action.get_config("basic.cache_max_size", 3)
 
     def get_cached_result(self, description: str, model: str, size: str, strength: float = None, is_img2img: bool = False) -> Optional[str]:
         """获取缓存的结果"""

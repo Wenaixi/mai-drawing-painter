@@ -151,6 +151,16 @@ class MaisArtPlugin(MaiBotPlugin):
                 await self._auto_selfie_task.stop()
             except Exception as e:
                 logger.warning(f"自动自拍任务停止失败: {e}")
+        # 清掉类级 base64 图缓存，避免 unload 后仍占 RSS
+        try:
+            from .core.utils.cache_manager import CacheManager
+
+            # CacheManager 方法要 action 实例；类级 dict 直接清空更稳
+            with CacheManager._cache_lock:
+                CacheManager._request_cache.clear()
+                CacheManager._img2img_cache.clear()
+        except Exception as e:
+            logger.warning(f"绘卷缓存清理失败: {e}")
         logger.info("麦麦绘卷已卸载")
 
     async def on_config_update(self, scope: str, config_data: dict, version: str) -> None:
