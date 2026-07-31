@@ -19,7 +19,7 @@ import asyncio
 import base64
 import logging
 import os
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Tuple
 
 from ..config import get_model_config
 from ..pipeline import GenerationRequest, build_auto_selfie_pipeline, make_pipeline_context
@@ -30,6 +30,7 @@ from .schedule_provider import get_schedule_provider
 
 if TYPE_CHECKING:
     from ..plugin import MaisArtPlugin
+    import httpx
 
 logger = logging.getLogger("plugin.mais_art_journal.auto_selfie")
 
@@ -46,11 +47,22 @@ class AutoSelfieTask:
         self.task: Optional[asyncio.Task] = None
         self._consecutive_failures = 0
         self._pipeline = build_auto_selfie_pipeline()
+        # 复用 httpx.AsyncClient，避免每次下载图片都新建连接池
+        self._http_client: Optional["httpx.AsyncClient"] = None
+        # 参考图缓存：(path, mtime, base64)
+        self._ref_cache: Optional[Tuple[str, float, str]] = None
 
     async def start(self) -> None:
         if self.is_running:
             return
         self.is_running = True
+        # trust_env=False：Docker 内代理环境变量会干扰直连
+        try:
+            import httpx
+            self._http_client = httpx.AsyncClient(timeout=30, trust_env=False)
+        except Exception as e:
+            logger.warning(f"创建 httpx.AsyncClient 失败（URL 图片兜底将不可用）: {e}")
+            self._http_client = None
         self.task = asyncio.create_task(self._selfie_loop())
         logger.info("自动自拍任务已启动")
 
@@ -64,6 +76,12 @@ class AutoSelfieTask:
                 await self.task
             except asyncio.CancelledError:
                 pass
+        if self._http_client is not None:
+            try:
+                await self._http_client.aclose()
+            except Exception:
+                pass
+            self._http_client = None
         logger.info("自动自拍任务已停止")
 
     # ==================== 主循环 ====================
@@ -191,6 +209,7 @@ class AutoSelfieTask:
     # ==================== 工具 ====================
 
     def _load_reference_image(self) -> Optional[str]:
+        """加载参考图，按 (path, mtime) 缓存 base64，避免每次重 encode"""
         path = (self.plugin.config.selfie.reference_image_path or "").strip()
         if not path:
             return None
@@ -199,11 +218,21 @@ class AutoSelfieTask:
                 path = os.path.join(self.plugin.plugin_dir, path)
             if not os.path.exists(path):
                 logger.warning(f"[AutoSelfie] 自拍参考图片文件不存在: {path}")
+                self._ref_cache = None
                 return None
+            mtime = os.path.getmtime(path)
+            if (
+                self._ref_cache is not None
+                and self._ref_cache[0] == path
+                and self._ref_cache[1] == mtime
+            ):
+                return self._ref_cache[2]
             with open(path, "rb") as f:
                 data = f.read()
+            b64 = base64.b64encode(data).decode("utf-8")
+            self._ref_cache = (path, mtime, b64)
             logger.info(f"[AutoSelfie] 从文件加载自拍参考图片: {path}")
-            return base64.b64encode(data).decode("utf-8")
+            return b64
         except Exception as e:
             logger.error(f"[AutoSelfie] 加载自拍参考图片失败: {e}")
             return None
@@ -255,22 +284,28 @@ class AutoSelfieTask:
         except Exception as e:
             logger.error(f"发布自拍到 QQ 空间异常: {e}", exc_info=True)
 
-    @staticmethod
-    async def _normalize_to_base64(image_data: str) -> Optional[str]:
+    async def _normalize_to_base64(self, image_data: str) -> Optional[str]:
         """把 image_data 统一成纯 base64 字符串
 
         pipeline 的 ResolveImageData step 保证 ``out.resolved_image_data`` 已经是纯 base64，
         本方法只是对 URL / data URI 形态做兜底（理论上不会触发）。
+        实例方法：复用 start() 时建好的 self._http_client。
         """
         if not image_data:
             return None
         if image_data.startswith(("http://", "https://")):
             try:
-                import httpx
-                async with httpx.AsyncClient(timeout=30) as client:
-                    resp = await client.get(image_data)
-                    resp.raise_for_status()
-                    return base64.b64encode(resp.content).decode("utf-8")
+                client = self._http_client
+                if client is None:
+                    # 兜底：start 失败时临时建（仍 trust_env=False）
+                    import httpx
+                    async with httpx.AsyncClient(timeout=30, trust_env=False) as tmp:
+                        resp = await tmp.get(image_data)
+                        resp.raise_for_status()
+                        return base64.b64encode(resp.content).decode("utf-8")
+                resp = await client.get(image_data)
+                resp.raise_for_status()
+                return base64.b64encode(resp.content).decode("utf-8")
             except Exception as exc:
                 logger.error(f"image_data 是 URL 但下载失败: {exc}")
                 return None

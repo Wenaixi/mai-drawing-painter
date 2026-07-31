@@ -9,12 +9,17 @@
 import asyncio
 import logging
 import time as time_module
-from typing import TYPE_CHECKING, Callable, Awaitable, Any, Optional
+import weakref
+from typing import TYPE_CHECKING, Callable, Awaitable, Any, Optional, Set
 
 if TYPE_CHECKING:
     from maibot_sdk.context import PluginContext
 
 logger = logging.getLogger("plugin.mais_art_journal.recall")
+
+# create_task 返回的 Task 若无强引用，会被 GC 提前回收（Python 文档明确警告）。
+# WeakSet 既保活到 task 完成，又在 done 后自动清掉。
+_pending_recalls: "weakref.WeakSet[asyncio.Task]" = weakref.WeakSet()
 
 # ==================== 消息匹配工具 ====================
 
@@ -265,7 +270,10 @@ async def schedule_auto_recall(
         except Exception as e:
             logger.error(f"{log_prefix} 自动撤回异常: {e}")
 
-    asyncio.create_task(_recall_task())
+    task = asyncio.create_task(_recall_task())
+    _pending_recalls.add(task)
+    # done_callback 显式 discard：WeakSet 在 task 仍被 event loop 引用时不会自动清
+    task.add_done_callback(_pending_recalls.discard)
 
 
 async def _try_recall_message(

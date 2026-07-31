@@ -1,8 +1,13 @@
+import hashlib
 import logging
 from typing import Optional, Dict, Any
 from threading import Lock
 
 logger = logging.getLogger("plugin.mais_art_journal.cache")
+
+# 与 BasicSection.cache_max_size schema 默认对齐（统一 3）
+_DEFAULT_CACHE_MAX_SIZE = 3
+
 
 class CacheManager:
     """缓存管理器"""
@@ -19,9 +24,10 @@ class CacheManager:
     def _get_max_size(self) -> int:
         """获取最大缓存数量配置。
 
-        默认 3：单条常为整图 base64（0.5–2MB），10 条峰值可到十几 MB。
+        默认与 schema BasicSection.cache_max_size 对齐（3）。
+        单条常为整图 base64（0.5–2MB），过大峰值可到十几 MB。
         """
-        return self.action.get_config("basic.cache_max_size", 3)
+        return self.action.get_config("basic.cache_max_size", _DEFAULT_CACHE_MAX_SIZE)
 
     def get_cached_result(self, description: str, model: str, size: str, strength: float = None, is_img2img: bool = False) -> Optional[str]:
         """获取缓存的结果"""
@@ -122,16 +128,21 @@ class CacheManager:
             logger.warning(f"{self.log_prefix} 获取缓存统计失败: {e}")
             return {}
 
+    @staticmethod
+    def _hash_desc(description: str) -> str:
+        """description 全文 md5，避免 [:N] 截断导致不同 prompt 撞 key"""
+        return hashlib.md5((description or "").encode("utf-8")).hexdigest()
+
     @classmethod
     def _get_cache_key(cls, description: str, model: str, size: str) -> str:
-        """生成文生图缓存键"""
-        return f"txt2img_{description[:100]}|{model}|{size}"
+        """生成文生图缓存键（description 用 md5，避免截断冲突）"""
+        return f"txt2img_{cls._hash_desc(description)}|{model}|{size}"
 
     @classmethod
     def _get_img2img_cache_key(cls, description: str, model: str, size: str, strength: float = None) -> str:
-        """生成图生图缓存键"""
+        """生成图生图缓存键（description 用 md5，避免截断冲突）"""
         strength_str = str(strength) if strength is not None else "default"
-        return f"img2img_{description[:50]}|{model}|{size}|{strength_str}"
+        return f"img2img_{cls._hash_desc(description)}|{model}|{size}|{strength_str}"
 
     @classmethod
     def _cleanup_cache_dict(cls, cache_dict: Dict, max_size: int):

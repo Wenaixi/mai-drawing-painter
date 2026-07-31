@@ -47,6 +47,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("plugin.mais_art_journal.factories")
 
+# 参考图缓存：(abs_path, mtime, base64)；mtime 变了才重读
+_selfie_ref_cache: Optional[tuple] = None  # type: ignore[type-arg]
+
 
 # ==================== 5 个 Pipeline 工厂 ====================
 
@@ -211,7 +214,11 @@ def _build_log_prefix(kwargs: Dict[str, Any]) -> str:
 
 
 def _load_selfie_reference_image(plugin: "MaisArtPlugin", log_prefix: str) -> Optional[str]:
-    """加载 selfie.reference_image_path 指定的参考图，返回 base64 或 None"""
+    """加载 selfie.reference_image_path 指定的参考图，返回 base64 或 None。
+
+    按 (abs_path, mtime) 缓存，mtime 不变时直接复用 base64，避免每次重 encode。
+    """
+    global _selfie_ref_cache
     path = (plugin.config.selfie.reference_image_path or "").strip()
     if not path:
         return None
@@ -221,11 +228,21 @@ def _load_selfie_reference_image(plugin: "MaisArtPlugin", log_prefix: str) -> Op
             path = os.path.join(plugin.plugin_dir, path)
         if not os.path.exists(path):
             logger.warning(f"{log_prefix} 自拍参考图片文件不存在: {path}")
+            _selfie_ref_cache = None
             return None
+        mtime = os.path.getmtime(path)
+        if (
+            _selfie_ref_cache is not None
+            and _selfie_ref_cache[0] == path
+            and _selfie_ref_cache[1] == mtime
+        ):
+            return _selfie_ref_cache[2]
         with open(path, "rb") as f:
             data = f.read()
+        b64 = base64.b64encode(data).decode("utf-8")
+        _selfie_ref_cache = (path, mtime, b64)
         logger.info(f"{log_prefix} 从文件加载自拍参考图片: {path}")
-        return base64.b64encode(data).decode("utf-8")
+        return b64
     except Exception as e:
         logger.error(f"{log_prefix} 加载自拍参考图片失败: {e}")
         return None

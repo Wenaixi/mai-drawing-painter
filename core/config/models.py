@@ -137,10 +137,10 @@ class BasicSection(PluginConfigBase):
         json_schema_extra={"label": "启用缓存", "order": 40},
     )
     cache_max_size: int = Field(
-        default=10,
+        default=3,
         ge=1,
         le=100,
-        description="最大缓存数量，超出后删除最旧的缓存",
+        description="最大缓存数量，超出后删除最旧的缓存（默认 3：单条常为整图 base64）",
         json_schema_extra={
             "label": "最大缓存数",
             "depends_on": "basic.cache_enabled",
