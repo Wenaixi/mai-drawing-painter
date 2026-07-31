@@ -35,3 +35,10 @@
 ## 历史脚注
 
 - 2026-07-28: 从服务器同步到本地仓库（baseline head=`23e67ae`）；补充 `.gitignore` 主人段与本 CLAUDE.md。
+- 2026-08-01: TDD 修 6 项 HIGH 审查问题（commit `2686a54`）
+  - `cache_manager._get_max_size` fallback 与 schema 统一 3；key 用 md5 防截断冲突
+  - `recall_utils._pending_recalls` WeakSet 保活 create_task
+  - `auto_selfie_task` AsyncClient 复用 + `trust_env=False`；参考图 mtime 缓存
+  - `factories._load_selfie_reference_image` 模块级 mtime 缓存
+  - 测试：`tests/test_review_fixes.py` 10 项；`tests/conftest.py` 本地 stub maibot_sdk
+  - 不改 `config.toml`（toml 里 `cache_max_size=10` 仍生效；schema 默认 3 只影响缺配置时）
