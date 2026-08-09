@@ -12,7 +12,8 @@
 
 ## 配置要点
 
-- 默认 / 命令 / 自拍模型均指向 `model1`；尺寸固定 `1024x1024`（也满足 MaiTrace 30s RPC 建议）。
+- 默认 / 命令 / 自拍模型均指向 `model1`；`fixed_size_enabled=false`，LLM 按内容选竖/横/方，`default_size=1024x1024` 仅作兜底。
+- MaiTrace 跨插件 `generate_image` 超时 `timeout_ms=600000`（10 分钟，对齐 OpenAI 客户端 600s）。
 - 自拍 / MaiTrace 配图在 `selfie_mode` 下读此图走图生图（仅在 `support_img2img=true` 的模型上生效）。
 
 ## 接入 & 依赖
