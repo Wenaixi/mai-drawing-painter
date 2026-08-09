@@ -258,6 +258,12 @@ def validate_image_size(size: str) -> bool:
     size = size.strip()
 
     try:
+        # 格式 6：上游自选 size（OpenAI `size="auto"` / NewAPI 透传）
+        # gpt-image-1/1.5/1-mini/2 / gpt-image-2-2026-04-21 均接受 "auto"，
+        # 实际尺寸由模型按 prompt 内容自定，2026-08-09 实证 NewAPI 转发有效
+        if size.lower() == "auto":
+            return True
+
         # 格式 5：纯分辨率档位（1K / 2K / 4K）—— DashScope 等使用
         if size.upper() in ("1K", "2K", "4K"):
             return True
