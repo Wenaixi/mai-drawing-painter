@@ -20,7 +20,9 @@ SIZE_SELECTOR_SYSTEM_PROMPT = """You are an image size selector. Based on the im
    - Landscape/scenery/wide scene → horizontal: 1216x832 or 1536x1024
    - Avatar/icon/square content → square: 1024x1024
    - Group photo/multiple people → horizontal: 1216x832
-3. Default to 1024x1024 if unclear
+3. Output "auto" if unclear — upstream model (gpt-image-2 etc.) will auto-pick based on prompt
+   - "auto" is a valid output the plugin recognises as of 2026-08-09
+   - "auto" means the upstream API chooses dimensions per its own discretion (supported by OpenAI gpt-image-1/1.5/2, NewAPI /v1/images/generations, etc.)
 
 ## Examples:
 Input: 一个女孩站在海边
@@ -155,6 +157,17 @@ async def get_image_size_async(
     """
     fixed_size_enabled = model_config.get("fixed_size_enabled", False)
     default_size = model_config.get("default_size", "1024x1024")
+
+    # 2026-08-09 短路：default_size="auto" 时直接交给上游模型自选，
+    # 跳过 LLM Size Selector 这一步（既不调 LLM、也不跑 LLM 兜底）。
+    # 不论 fixed_size_enabled 是 true 还是 false 都走这条路径：
+    # - fixed_size_enabled=false + default_size="auto"   → 直接 auto
+    # - fixed_size_enabled=true  + default_size="auto"   → 直接 auto
+    # 上游 (gpt-image-1/1.5/2 / NewAPI) 接受 "auto" 并按 prompt 自由出图。
+    if isinstance(default_size, str) and default_size.strip().lower() == "auto":
+        if log_prefix:
+            logger.info(f"{log_prefix} default_size=auto，跳过 LLM 尺寸选择，交上游自选")
+        return default_size, None
 
     if fixed_size_enabled:
         # 特殊处理："-2K" 格式需要 LLM 选择宽高比
