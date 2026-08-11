@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"scp -i C:/Users/Administrator/.ssh/wen.pem -o ConnectTimeout=15 \\\"D:/newC/CCC/fuwuq/Maibot-new/plugins/1021143806_mais_art_journal/core/utils/size_utils.py\\\" root@43.128.132.248:/root/MaiB...",
+  "error": "Exit code 127\n/usr/bin/bash: line 1: 麦麦绘卷命令前缀 | tail -3: command not found",
+  "timestamp": "2026-08-09T09:07:47.250Z",
+  "retry_count": 1
+}

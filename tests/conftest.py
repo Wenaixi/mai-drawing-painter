@@ -40,6 +40,16 @@ def _ensure_maibot_sdk_stub() -> None:
     sdk.PluginConfigBase = PluginConfigBase  # type: ignore[attr-defined]
     sdk.MaiBotPlugin = object  # type: ignore[attr-defined]
 
+    def Tool(*args, **metadata):
+        def decorator(func):
+            func.__maibot_component__ = types.SimpleNamespace(metadata=metadata)
+            return func
+        return decorator
+
+    sdk.Tool = Tool  # type: ignore[attr-defined]
+    sdk.API = Tool  # type: ignore[attr-defined]
+    sdk.Command = Tool  # type: ignore[attr-defined]
+
     ctx_mod = types.ModuleType("maibot_sdk.context")
     ctx_mod.PluginContext = object  # type: ignore[attr-defined]
 

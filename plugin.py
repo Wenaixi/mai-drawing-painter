@@ -202,6 +202,7 @@ class MaisArtPlugin(MaiBotPlugin):
         "draw_picture",
         description=_DRAW_TOOL_DESCRIPTION,
         parameters=_DRAW_TOOL_PARAMETERS,
+        timeout_ms=120_000,
     )
     async def handle_draw_picture(self, **kwargs: Any):
         """智能生图入口（@Tool），LLM/规划器调用时由 host 把 function_args 平铺进 kwargs，

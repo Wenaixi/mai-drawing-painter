@@ -53,6 +53,18 @@ def test_cache_max_size_default_matches_schema():
     )
 
 
+def test_draw_picture_declares_long_rpc_timeout():
+    """生图通常超过宿主默认 60 秒，Tool 必须声明 10 分钟 RPC 超时。"""
+    import importlib
+
+    package_parent = str(PLUGIN_DIR.parent)
+    if package_parent not in sys.path:
+        sys.path.insert(0, package_parent)
+    module = importlib.import_module(f"{PLUGIN_DIR.name}.plugin")
+    info = getattr(module.MaisArtPlugin.handle_draw_picture, "__maibot_component__")
+    assert info.metadata["timeout_ms"] == 120_000
+
+
 # ==================== HIGH 4: cache key 不再截断冲突 ====================
 
 def test_cache_key_no_truncation_collision():

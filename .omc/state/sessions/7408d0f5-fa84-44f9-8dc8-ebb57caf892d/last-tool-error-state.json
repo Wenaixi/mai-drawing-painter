@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"ssh 43.128.132.248 \\\"docker exec maim-bot-core python -c 'from maibot_sdk import Tool; @Tool(\\\\\\\"x\\\\\\\", timeout_ms=600000)\\\\ndef f(): pass'\\\"\",\"timeout\":120000,\"description\":\"尝试在容器中构造带超时的 ...",
+  "error": "Exit code 1\n  File \"<string>\", line 1\n    from maibot_sdk import Tool; @Tool(\"x\", timeout_ms=600000)\\ndef f(): pass\n                                 ^\nSyntaxError: invalid syntax",
+  "timestamp": "2026-08-11T02:03:06.101Z",
+  "retry_count": 2
+}
