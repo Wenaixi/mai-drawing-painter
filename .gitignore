@@ -33,3 +33,5 @@ requirements.txt
 !data/
 !cookies-*.json
 
+# OMC CLI 状态文件（不纳入仓库）
+.omc/
