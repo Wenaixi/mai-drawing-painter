@@ -70,7 +70,7 @@ def build_client_context_from_plugin(
     if proxy_cfg is not None:
         proxy = ProxyConfig(
             enabled=bool(getattr(proxy_cfg, "enabled", False)),
-            url=str(getattr(proxy_cfg, "url", "http://127.0.0.1:7890") or "http://127.0.0.1:7890"),
+            url=str(getattr(proxy_cfg, "url", "") or ""),
             timeout=int(getattr(proxy_cfg, "timeout", 60) or 60),
         )
 
@@ -97,7 +97,7 @@ def build_client_context_from_extra(
         if isinstance(proxy_section, dict) and proxy_section.get("enabled"):
             proxy = ProxyConfig(
                 enabled=True,
-                url=str(proxy_section.get("url", "http://127.0.0.1:7890") or "http://127.0.0.1:7890"),
+                url=str(proxy_section.get("url", "") or ""),
                 timeout=int(proxy_section.get("timeout", 60) or 60),
             )
 

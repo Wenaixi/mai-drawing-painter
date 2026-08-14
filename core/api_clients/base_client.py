@@ -50,7 +50,7 @@ class BaseApiClient:
             if not proxy_enabled:
                 return None
 
-            proxy_url = self.ctx.get_config("proxy.url", "http://127.0.0.1:7890")
+            proxy_url = self.ctx.get_config("proxy.url", "")
             timeout = self.ctx.get_config("proxy.timeout", 60)
 
             proxy_config = {

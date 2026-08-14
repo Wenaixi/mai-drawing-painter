@@ -281,8 +281,8 @@ class DashScopeClient(BaseApiClient):
                 body = ""
                 try:
                     body = he.read().decode("utf-8", errors="replace") if he.fp else ""
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("dashscope: 读取错误响应体失败: %s", exc)
                 return he.code, body
         except Exception as e:
             logger.error(f"{self.log_prefix} (DashScope) HTTP 请求异常: {e}")

@@ -39,8 +39,8 @@ async def _get_reply_style(ctx: "PluginContext") -> str:
     if multi_styles and probability > 0 and random.random() < probability:
         try:
             reply_style = random.choice(list(multi_styles))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("caption_generator: random.choice multi_styles 失败: %s", exc)
 
     return str(reply_style or "")
 

@@ -79,8 +79,8 @@ class AutoSelfieTask:
         if self._http_client is not None:
             try:
                 await self._http_client.aclose()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("auto_selfie: 关闭 http_client 失败: %s", exc)
             self._http_client = None
         logger.info("自动自拍任务已停止")
 

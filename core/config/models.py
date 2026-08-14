@@ -334,7 +334,7 @@ class ProxySection(PluginConfigBase):
         json_schema_extra={"label": "启用代理", "order": 1},
     )
     url: str = Field(
-        default="http://127.0.0.1:7890",
+        default="",
         description="代理服务器地址",
         json_schema_extra={
             "label": "代理地址",

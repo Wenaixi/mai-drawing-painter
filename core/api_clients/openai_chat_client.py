@@ -147,8 +147,8 @@ class OpenAIChatClient(BaseApiClient):
         verbose_debug = False
         try:
             verbose_debug = self.ctx.get_config("basic.enable_verbose_debug", False)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("openai_chat: 读取 verbose_debug 配置失败: %s", exc)
 
         if verbose_debug:
             safe_payload = payload_dict.copy()

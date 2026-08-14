@@ -253,8 +253,8 @@ class PlanningPluginProvider(ScheduleProvider):
                     LIMIT 20
                 """, (today_str,))
                 rows = cursor.fetchall()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("schedule_provider: 查询今日活跃目标异常: %s", exc)
 
             if not rows:
                 logger.debug("今天没有活跃目标，回退到最近的活跃记录")
@@ -351,8 +351,8 @@ def _build_sqlite_provider(
                             logger.info(f"找到 autonomous_planning 数据库: {db_path}")
                             return PlanningPluginProvider(db_path)
                         conn.close()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("schedule_provider: 探测 autonomous_planning 数据库失败: %s", exc)
     return None
 
 

@@ -63,7 +63,7 @@ class ComfyUIClient(BaseApiClient):
         input_image_base64: str = None
     ) -> Tuple[bool, str]:
         """通过 ComfyUI 工作流生成图片"""
-        base_url = model_config.get("base_url", "http://127.0.0.1:8188").rstrip("/")
+        base_url = model_config.get("base_url", "").rstrip("/")
         workflow_name = model_config.get("model", "")
         seed = model_config.get("seed", -1)
         custom_prompt_add = model_config.get("custom_prompt_add", "")
@@ -215,8 +215,8 @@ class ComfyUIClient(BaseApiClient):
                     for img in node_output["images"]:
                         if "filename" in img:
                             return img["filename"]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("comfyui: 解析 _find_filename 异常: %s", exc)
         return None
 
     def _download_image_sync(self, base_url: str, filename: str, opener: urllib.request.OpenerDirector) -> Optional[str]:
