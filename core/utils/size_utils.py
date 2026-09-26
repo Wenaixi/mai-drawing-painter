@@ -67,7 +67,7 @@ async def select_size_with_llm(
     try:
         result = await ctx.llm.generate(
             prompt=full_prompt,
-            model=llm_task,
+            task_name=llm_task,
             temperature=0.3,
             max_tokens=64,
         )

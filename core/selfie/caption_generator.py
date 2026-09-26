@@ -139,7 +139,7 @@ async def generate_caption(
 
         result = await ctx.llm.generate(
             prompt=prompt,
-            model=llm_task,
+            task_name=llm_task,
             temperature=0.85,
             max_tokens=8192,
         )

@@ -297,7 +297,7 @@ async def generate_hand_action_with_llm(
         system_prompt = build_scene_llm_prompt(selfie_style)
         prompt = f"{system_prompt}\n\nActivity: {description}"
 
-        result = await ctx.llm.generate(prompt=prompt, model=llm_task, temperature=0.7, max_tokens=8192)
+        result = await ctx.llm.generate(prompt=prompt, task_name=llm_task, temperature=0.7, max_tokens=8192)
         success, response, model_name = False, "", ""
         if isinstance(result, dict):
             success = bool(result.get("success", True))

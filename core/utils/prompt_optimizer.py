@@ -124,7 +124,7 @@ async def optimize_prompt(
     try:
         result = await ctx.llm.generate(
             prompt=full_prompt,
-            model=llm_task,
+            task_name=llm_task,
             temperature=0.7,
             max_tokens=8192,
         )
