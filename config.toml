@@ -6,8 +6,8 @@ enabled = true
 [basic]
 command_prefix = "/dr"
 default_model = "model1"
-enable_unified_generation = true
-enable_pic_command = true
+enable_unified_generation = false
+enable_pic_command = false
 enable_pic_config = true
 enable_pic_style = true
 pic_command_model = "model1"
@@ -23,7 +23,7 @@ llm_task_name = "utils"
 
 [selfie]
 enabled = true
-reference_image_path = "images/reference.jpg"
+reference_image_path = "images/"
 prompt_prefix = ""
 negative_prompt = ""
 schedule_enabled = true

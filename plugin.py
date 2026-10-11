@@ -209,6 +209,10 @@ class MaisArtPlugin(MaiBotPlugin):
         同时附带 stream_id / chat_id / group_id / user_id / platform 上下文字段。
         所有逻辑委托给 action pipeline。
         """
+        if not getattr(self.config.basic, "enable_unified_generation", True):
+            logger.info("麦麦绘卷: 智能生图 Tool (draw_picture) 已在 basic.enable_unified_generation 配置中关闭")
+            return False, "智能生图功能已禁用"
+
         if self._action_pipeline is None:
             logger.error("Action pipeline 尚未初始化")
             return False, "插件未就绪"
@@ -234,6 +238,7 @@ class MaisArtPlugin(MaiBotPlugin):
         ),
         version="1",
         public=True,
+        timeout_ms=300_000,
     )
     async def api_generate_image(
         self,
@@ -481,6 +486,34 @@ class MaisArtPlugin(MaiBotPlugin):
                 metadata["command_pattern"] = new_pattern
                 logger.info(f"麦麦绘卷命令前缀生效: {prefix!r} (pattern={new_pattern!r})")
                 break
+
+        # 若 basic.enable_unified_generation 为 false，彻底从向 host 暴露的组件列表中剔除 Tool draw_picture
+        enable_tool = True
+        try:
+            # 优先从内存字典取
+            cfg_data = getattr(self, "_plugin_config_data", None) or self.get_plugin_config_data()
+            if isinstance(cfg_data, dict) and "basic" in cfg_data:
+                enable_tool = bool(cfg_data["basic"].get("enable_unified_generation", True))
+            else:
+                # 兜底直接读本地 config.toml
+                try:
+                    import tomllib
+                except ImportError:
+                    import tomli as tomllib  # type: ignore
+                toml_path = os.path.join(self._plugin_dir, "config.toml")
+                if os.path.exists(toml_path):
+                    with open(toml_path, "rb") as tf:
+                        t = tomllib.load(tf)
+                        enable_tool = bool(t.get("basic", {}).get("enable_unified_generation", True))
+        except Exception as e:
+            logger.warning(f"读取 enable_unified_generation 异常: {e}")
+
+        if not enable_tool:
+            components = [
+                comp for comp in components
+                if not (comp.get("name") == "draw_picture" and str(comp.get("type", "")).upper() == "TOOL")
+            ]
+            logger.info("麦麦绘卷: 已关闭大模型自主生图 Tool (draw_picture)，仅保留纯 API 与管理组件")
 
         return components
 
