@@ -1,5 +1,13 @@
 # 麦麦绘卷（1021143806_mais_art_journal）
 
+## 官方上游与版本溯源
+- 官方仓库（Upstream Repository）：https://github.com/1021143806/mais_art_journal
+- 官方作者（Author / Maintainer）：1021143806
+- 功能定位：多模型智能绘图插件（麦麦绘卷：文生图/图生图/多参考图轮换）
+- 本地演进定位：基于官方上游最新版本，融入本地生产环境兼容性定制与稳定性加固。
+- 本地专属定制：本地实装 enable_unified_generation 动态过滤 @Tool draw_picture 开关；打通目录模式多参考图随机轮换引擎。
+
+
 源: GitHub 用户 `1021143806/mais_art_journal`  
 插件 ID: `1021143806.mais_art_journal` 版本 v4.2.0  
 路径: `/root/MaiBot/data/MaiMBot/plugins/1021143806_mais_art_journal/`
