@@ -112,3 +112,12 @@
   - 主人问"多张参考图同时参与"的能力，分析过 `zmq175/mais_art_journal` fork（逗号分隔、随机选一张）、AstrBot 圈 `Railgun19457`（`reference_images` 数组 + 队列 + 分批发送）、`muyouzhi6/astrbot_plugin_gitee_aiimg`（批量出图 + LLM 规划多提示词）、`GALIAIS`（输入图 hash 去重）等。
   - API 层统一规范：**gpt-image-2 端 `/v1/images/edits` 用 `image[]` 字段重复最多 16 张**，prompt 模板 `"Image 1 / Image 2 / Image 3"` 显式引用；**Gemini 3 image 用 `contents=[text, img1, img2, ...]` 多模态数组**最多 14 张；**FLUX.2 用 `input_images[]` 数组**，最多 8 张；Midjourney 用 `--sref url1::w url2::w`。
   - 本轮**不实现**，仅有方案图谱。如要实现：plugin 端改 `factories.py` `_load_selfie_reference_image` → 返回 `list[str]`；`call_api.py` → 传 list；`openai_client.py` `payload["image"] = [list]`；`gemini_client.py` `contents = [...]`。
+
+- 2026-10-15: 绘卷 5.0 视觉中枢架构升级（万能穿透、多图编辑、防爆降采样、视角分流）正式实现
+  - 实装万能图片提取引擎（image_utils.py: extract_all_images）：全面兼容普通图片 (image)、自定义表情 (emoji)、QQ 商城表情 (mface)、原创大表情 (bface) 与宿主 DictComponent 包装层；支持外链 URL 异步安全补拉；
+  - 单层 reply 引用穿透 (Q2->A) 与智能序列合并 (Q4->A)：被引用的表情包/图片自动排为图1，本消息自带图片排为图2、图3，上限截断保留前 3 张；
+  - 群友口语图号正则精准映射 (generate.py: _map_image_references)：自动将“图1/图一/第一张”对齐为 OpenAI 官方规范的 Image 1，“图2/第二张”对齐为 Image 2；
+  - OpenAI 官方多图编辑端点打通 (openai_client.py: generate_image)：多图输入自动切换 /v1/images/edits 并组装 images: [{"image_url": ...}] 数组，单图保持向后兼容；
+  - 前置等比防爆降采样护城河 (image_utils.py: _downsample_image_if_needed)：长边 > 1200px 或体积 > 1.5MB 自动缩放至 1200px 质量 85，单张约 300KB，彻底阻断宿主 OOM 危机；
+  - 拟人视角智能分流联动 (GenerationRequest: viewpoint & visual_scene)：与上帝引擎端到端打通，viewpoint == "pov" 时生成纯写实生活景物/静物抓拍，viewpoint == "selfie" 时合入波奇底模生活自拍；
+  - 本地测试套件 tests/test_image_extraction.py 与 tests/test_command_multi_image.py 全部 100% 满分通过，本地提交 7396f99。
