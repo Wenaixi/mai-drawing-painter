@@ -32,6 +32,23 @@ _RESERVED = {"list", "models", "config", "set", "reset", "on", "off",
 
 _ACTION_WORDS = ["画", "生成", "绘制", "创作", "制作", "画成", "变成", "改成", "用", "来", "帮我", "给我"]
 
+# 群友口语图号正则精准映射规则表 (Q1->B)
+_IMG_NUM_PATTERNS = [
+    (re.compile(r"(?:第[一1]张(?:图片?|图)?|图[一1]|第一幅图?)"), "Image 1"),
+    (re.compile(r"(?:第[二2]张(?:图片?|图)?|图[二2]|第二幅图?)"), "Image 2"),
+    (re.compile(r"(?:第[三3]张(?:图片?|图)?|图[三3]|第三幅图?)"), "Image 3"),
+]
+
+
+def _map_image_references(text: str) -> str:
+    """将群友口语中的图1/图2精准对齐为 OpenAI 官方规范的 Image 1/Image 2。"""
+    if not text:
+        return text
+    mapped = text
+    for pat, repl in _IMG_NUM_PATTERNS:
+        mapped = pat.sub(repl, mapped)
+    return mapped
+
 
 # 单例缓存：每条 pipeline 在进程内只创建一次
 _STYLE_PIPELINE = None
@@ -113,10 +130,10 @@ async def _execute_style_mode(
         chat_id=chat_id, stream_id=stream_id,
     )
     image_processor = ImageProcessor(request_ctx)
-    input_image = await image_processor.get_recent_image()
-    if not input_image:
+    input_images = await image_processor.get_all_recent_images()
+    if not input_images:
         await plugin.ctx.send.text(
-            "请引用包含图片的消息，或在 /dv 命令同条消息中附上图片",
+            "请引用包含图片/表情包的消息，或在命令同条消息中附上图片",
             stream_id,
         )
         return False, "未找到输入图片", True
@@ -128,11 +145,13 @@ async def _execute_style_mode(
     if plugin.config.basic.enable_debug_info:
         await plugin.ctx.send.text(f"使用风格：{style_label}", stream_id)
 
+    mapped_style_prompt = _map_image_references(style_prompt)
     req = GenerationRequest(
-        description=style_prompt,
+        description=mapped_style_prompt,
         model_id=model_id,
         strength=0.7,
-        input_image_base64=input_image,
+        input_image_base64=input_images[0],
+        input_images_base64=input_images,
         send_image=True,
         update_cache=True,
         schedule_recall=True,
@@ -185,13 +204,15 @@ async def _execute_natural_mode(
         chat_id=chat_id, stream_id=stream_id,
     )
     image_processor = ImageProcessor(request_ctx)
-    input_image = await image_processor.get_recent_image()
+    input_images = await image_processor.get_all_recent_images()
+    mapped_description = _map_image_references(description)
 
     req = GenerationRequest(
-        description=description,
+        description=mapped_description,
         model_id=model_id,
-        strength=0.7 if input_image else None,
-        input_image_base64=input_image,
+        strength=0.7 if input_images else None,
+        input_image_base64=input_images[0] if input_images else None,
+        input_images_base64=input_images,
         send_image=True,
         update_cache=True,
         schedule_recall=True,
@@ -205,7 +226,7 @@ async def _execute_natural_mode(
     ctx = make_pipeline_context(plugin, req)
     out = await _get_natural_pipeline().run(req, ctx)
 
-    mode_text = "图生图" if input_image else "文生图"
+    mode_text = "图生图" if input_images else "文生图"
     if not out.success:
         return False, f"{mode_text}失败: {out.error}", True
     return True, f"{mode_text}命令执行成功", True

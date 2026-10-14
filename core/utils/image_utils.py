@@ -1,333 +1,350 @@
-import base64
-import urllib.request
-import traceback
-import logging
-from typing import Any, Optional, Tuple, List
+# -*- coding: utf-8 -*-
+"""图片处理工具模块。
 
-from maim_message import Seg
+提供对 NapCat / OneBot 11 各种消息段（image, emoji, mface, reply）的
+万能穿透提取、多图按序收集、外链异步补拉与前置等比防爆降采样能力。
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import io
+import logging
+import os
+import traceback
+import urllib.request
+from typing import Any, Dict, List, Optional, Tuple
+
+import httpx
+from PIL import Image
+
+try:
+    from maim_message import Seg
+except ImportError:
+    Seg = None
 
 logger = logging.getLogger("plugin.mais_art_journal.image")
 
+# 标准浏览器请求头，避免图床 403 拦截
+_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+}
+
 
 class ImageProcessor:
-    """图片处理工具类
+    """万能图片处理工具类。"""
 
-    构造时接收 RequestContext（或鸭子类型），需要：
-    - log_prefix
-    - 可选：message（Command 路径触发消息 dict；Tool 路径为 None）
-    - 可选：ctx（PluginContext，用于 get_by_id 回拉 reply 目标消息）
-    - 可选：chat_id（用于 get_by_id 时定位会话）
-    """
-
-    def __init__(self, action_instance):
+    def __init__(self, action_instance: Any) -> None:
         self.action = action_instance
         self.log_prefix = getattr(action_instance, "log_prefix", "[MaisArt]")
         self._ctx = getattr(action_instance, "ctx", None)
         self._chat_id = getattr(action_instance, "chat_id", "") or getattr(action_instance, "stream_id", "")
 
-    # ==================== 当前消息内提取 ====================
+    # ==================== 主入口方法 ====================
 
-    @staticmethod
-    def _current_message_obj(action: Any) -> Any:
-        """返回 command 路径的触发消息 dict；Tool 路径无 message 时为 None"""
-        return getattr(action, "message", None)
+    async def get_recent_image(self) -> Optional[str]:
+        """向下兼容单图入口：提取第一张参考图，找不到返回 None。"""
+        images = await self.get_all_recent_images()
+        return images[0] if images else None
 
-    def _extract_image_from_current_dict(self, message: dict) -> Optional[str]:
-        """从 SDK 2.x RPC 序列化的 dict 消息里直接抓 base64
+    async def get_all_recent_images(self) -> List[str]:
+        """万能多图提取入口：
 
-        host 给 command 入口 include_binary_data=False，绝大多数情况下
-        image 段不会带 binary_data_base64；找到 hash 时返回 ``hash:<v>`` 让上层
-        再通过 ctx.message.get_by_id(include_binary_data=True) 回填。
+        1. 穿透单层被引用回复消息中的图片/表情包 (Q2->A)；
+        2. 提取当前消息自带的全部图片/表情包；
+        3. 智能序列合并：引用图为图1，当前图为图2、图3 (Q4->A)；
+        4. 硬性截断最多保留前 3 张，并进行前置等比防爆降采样 (Q3->A)。
         """
-        raw = message.get("raw_message")
-        if not isinstance(raw, list):
-            return None
-
-        first_hash: Optional[str] = None
-        target_msg_id: Optional[str] = None
-
-        for seg in raw:
-            if not isinstance(seg, dict):
-                continue
-            stype = str(seg.get("type") or "").lower()
-
-            if stype in ("image", "emoji"):
-                b64 = seg.get("binary_data_base64")
-                if isinstance(b64, str) and b64:
-                    logger.info(f"{self.log_prefix} 从当前消息段直接取到图片 base64")
-                    return b64
-                if first_hash is None:
-                    raw_hash = seg.get("hash") or seg.get("data")
-                    if isinstance(raw_hash, str) and raw_hash:
-                        first_hash = raw_hash
-
-            elif stype == "reply":
-                data = seg.get("data") or {}
-                if isinstance(data, dict):
-                    tid = data.get("target_message_id")
-                    if isinstance(tid, str) and tid:
-                        target_msg_id = tid
-
-        if first_hash:
-            return f"hash::{first_hash}"
-        if target_msg_id:
-            return f"reply::{target_msg_id}"
-        return None
-
-    def _extract_image_from_legacy_seg(self, message: Any) -> Optional[str]:
-        """兼容 message_segment 树 / SessionMessage.raw_message.components 的老对象形态"""
-        # 老 Seg 树
-        seg = getattr(message, "message_segment", None)
-        if seg is not None:
-            for b64 in self.find_and_return_emoji_in_message(seg):
-                if isinstance(b64, str) and b64:
-                    return b64
-
-        # SessionMessage.raw_message.components
-        raw_msg = getattr(message, "raw_message", None)
-        components = getattr(raw_msg, "components", None) if raw_msg is not None else None
-        if isinstance(components, (list, tuple)):
-            for comp in components:
-                cls_name = type(comp).__name__
-                if cls_name in ("ImageComponent", "EmojiComponent"):
-                    binary = getattr(comp, "binary_data", None)
-                    if isinstance(binary, (bytes, bytearray)) and binary:
-                        return base64.b64encode(bytes(binary)).decode("utf-8")
-                    content = getattr(comp, "content", None)
-                    if isinstance(content, str) and content:
-                        return content
-        return None
-
-    # ==================== ctx capability 路径 ====================
-
-    async def _fetch_image_by_message_id(self, message_id: str) -> Optional[str]:
-        """通过 ctx.message.get_by_id(include_binary_data=True) 拉回完整消息并抓图"""
-        if self._ctx is None or not message_id:
-            return None
         try:
-            full = await self._ctx.message.get_by_id(
-                message_id=message_id,
-                chat_id=self._chat_id or "",
-                include_binary_data=True,
-            )
-        except Exception as e:
-            logger.debug(f"{self.log_prefix} get_by_id 失败 ({message_id}): {e}")
-            return None
-        if not isinstance(full, dict):
-            return None
-        return self._scan_raw_for_binary(full.get("raw_message"))
+            message = getattr(self.action, "message", None)
+            if message is None:
+                return []
+            return await self.extract_all_images(message, chat_id=self._chat_id, ctx=self._ctx)
+        except Exception as exc:
+            logger.error(f"{self.log_prefix} 获取图片列表失败: {exc!r}", exc_info=True)
+            return []
 
-    async def fetch_image_by_triggering_id(
+    async def extract_all_images(
         self,
-        triggering_message_id: Optional[str],
-    ) -> Optional[str]:
-        """Tool 路径专用：依据 LLM 透传的 msg_id 100% 锁定触发消息抓图。
+        message: Any,
+        chat_id: str = "",
+        ctx: Any = None,
+    ) -> List[str]:
+        """全链路静态/实例方法：从任意 message 结构提取有序图片列表。"""
+        if not message:
+            return []
 
-        查找顺序：
-        1. 触发消息自身含 image/emoji 段 → 直接返回
-        2. 触发消息含 reply（看 reply_to 快捷字段，缺则扫 raw_message 的 reply 段）
-           → 拉被引用消息再抓图
-        """
-        if self._ctx is None or not triggering_message_id:
+        target_images: List[str] = []
+        current_images: List[str] = []
+
+        # 1. 单层被引用消息穿透检测 (Q2->A)
+        target_msg_id = self._extract_reply_target_id(message)
+        if target_msg_id and ctx and hasattr(ctx, "message") and hasattr(ctx.message, "get_by_id"):
+            try:
+                logger.info(f"{self.log_prefix} 检测到引用消息 target_id={target_msg_id}，拉取被引用消息...")
+                target_msg = await ctx.message.get_by_id(
+                    message_id=target_msg_id,
+                    chat_id=chat_id or "",
+                    include_binary_data=True,
+                )
+                if isinstance(target_msg, dict):
+                    target_images = await self._collect_images_from_msg(target_msg, ctx=ctx)
+                    logger.info(f"{self.log_prefix} 从被引用消息中成功解析 {len(target_images)} 张图片")
+            except Exception as exc:
+                logger.debug(f"{self.log_prefix} 回拉被引用消息取图跳过: {exc}")
+
+        # 2. 提取当前消息自身包含的所有图片/表情
+        current_images = await self._collect_images_from_msg(message, ctx=ctx)
+
+        # 3. 智能序列合并 (Q4->A)：引用图排在前面(图1)，当前消息图排在后面(图2, 图3)
+        combined = target_images + current_images
+        if not combined:
+            return []
+
+        # 4. 去重并保留出现顺序
+        seen_hashes = set()
+        deduped: List[str] = []
+        for b64 in combined:
+            if not b64 or not isinstance(b64, str):
+                continue
+            h = hashlib.md5(b64.encode("utf-8")[:1024]).hexdigest()
+            if h not in seen_hashes:
+                seen_hashes.add(h)
+                deduped.append(b64)
+
+        # 5. 上限硬性截断最多保留前 3 张
+        capped = deduped[:3]
+
+        # 6. 前置等比防爆降采样 (Q3->A)
+        processed: List[str] = []
+        for idx, b64 in enumerate(capped):
+            downsampled = self._downsample_image_if_needed(b64)
+            processed.append(downsampled)
+            logger.info(f"{self.log_prefix} 图{idx+1} 提取就绪 (有效 Base64 长度: {len(downsampled)})")
+
+        return processed
+
+    # ==================== 递归消息段扫描 ====================
+
+    async def _collect_images_from_msg(self, message: Any, ctx: Any = None) -> List[str]:
+        """从单条消息字典或组件对象中，全量收集图片/表情的 Base64 列表。"""
+        collected: List[str] = []
+
+        # 处理字典形态 (SDK 2.x raw_message / components)
+        if isinstance(message, dict):
+            raw = message.get("raw_message") or message.get("message") or message.get("components")
+            if isinstance(raw, list):
+                for seg in raw:
+                    if not isinstance(seg, dict):
+                        continue
+                    b64 = await self._resolve_segment_to_b64(seg, ctx=ctx)
+                    if b64:
+                        collected.append(b64)
+            elif isinstance(raw, dict):
+                b64 = await self._resolve_segment_to_b64(raw, ctx=ctx)
+                if b64:
+                    collected.append(b64)
+
+        # 处理组件对象形态 (SessionMessage.raw_message.components)
+        elif hasattr(message, "raw_message"):
+            components = getattr(message.raw_message, "components", None)
+            if isinstance(components, (list, tuple)):
+                for comp in components:
+                    cls_name = type(comp).__name__
+                    if cls_name in ("ImageComponent", "EmojiComponent"):
+                        binary = getattr(comp, "binary_data", None)
+                        if isinstance(binary, (bytes, bytearray)) and binary:
+                            collected.append(base64.b64encode(bytes(binary)).decode("utf-8"))
+                        content = getattr(comp, "content", None)
+                        if isinstance(content, str) and content.startswith("data:image/"):
+                            collected.append(content.split(";base64,", 1)[-1])
+
+        # 处理老 Seg 树形态
+        if Seg is not None and hasattr(message, "message_segment"):
+            seg = getattr(message, "message_segment", None)
+            if seg is not None:
+                collected.extend(self.find_and_return_emoji_in_message(seg))
+
+        return collected
+
+    async def _resolve_segment_to_b64(self, seg: dict, ctx: Any = None) -> Optional[str]:
+        """将单个消息段解析为纯 Base64 字符串（全面兼容 image, emoji, mface, bface, dict）。"""
+        stype = str(seg.get("type") or "").lower()
+        data = seg.get("data") if isinstance(seg.get("data"), dict) else {}
+
+        # 宿主 DictComponent 包装层穿透
+        if stype == "dict":
+            inner_type = str(data.get("type") or "").lower()
+            if inner_type in ("image", "emoji", "mface", "bface", "face"):
+                stype = inner_type
+                data = data.get("data") if isinstance(data.get("data"), dict) else data
+
+        # 仅处理视觉图像类段落
+        if stype not in ("image", "emoji", "mface", "bface"):
             return None
 
-        try:
-            message = await self._ctx.message.get_by_id(
-                message_id=triggering_message_id,
-                chat_id=self._chat_id or "",
-                include_binary_data=True,
-            )
-        except Exception as e:
-            logger.debug(f"{self.log_prefix} get_by_id 失败 ({triggering_message_id}): {e}")
-            return None
+        # 1. 优先读取已存在的二进制 Base64
+        b64 = seg.get("binary_data_base64") or data.get("binary_data_base64")
+        if isinstance(b64, str) and b64:
+            return b64
+
+        # 2. 检查外链 URL（NapCat 商城表情、外链图片）异步安全补拉
+        url = seg.get("url") or data.get("url")
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            downloaded = await self._async_download_to_b64(url)
+            if downloaded:
+                return downloaded
+
+        # 3. 检查 file 字段
+        file_val = seg.get("file") or data.get("file")
+        if isinstance(file_val, str) and file_val:
+            if file_val.startswith(("http://", "https://")):
+                downloaded = await self._async_download_to_b64(file_val)
+                if downloaded:
+                    return downloaded
+            if file_val.startswith("base64://"):
+                return file_val.removeprefix("base64://")
+            if os.path.exists(file_val):
+                try:
+                    with open(file_val, "rb") as fp:
+                        return base64.b64encode(fp.read()).decode("utf-8")
+                except Exception:
+                    pass
+
+        return None
+
+    def _extract_reply_target_id(self, message: Any) -> Optional[str]:
+        """提取当前消息中的被引用消息 ID（单层引用）。"""
         if not isinstance(message, dict):
             return None
 
-        b64 = self._scan_raw_for_binary(message.get("raw_message"))
-        if b64:
-            logger.info(f"{self.log_prefix} 触发消息含图，按 msg_id 直接命中")
-            return b64
+        # 顶层快捷字段
+        reply_to = message.get("reply_to")
+        if isinstance(reply_to, (str, int)) and str(reply_to).strip():
+            return str(reply_to).strip()
 
-        target_id = str(message.get("reply_to") or "").strip()
-        if not target_id:
-            for seg in message.get("raw_message") or []:
+        # 扫描 raw_message 中的 reply 段
+        raw = message.get("raw_message") or message.get("message") or []
+        if isinstance(raw, list):
+            for seg in raw:
                 if not isinstance(seg, dict):
                     continue
-                if str(seg.get("type") or "").lower() != "reply":
-                    continue
-                data = seg.get("data") or {}
-                if isinstance(data, dict):
-                    target_id = str(data.get("target_message_id") or "").strip()
-                if target_id:
-                    break
-
-        if target_id:
-            logger.info(f"{self.log_prefix} 触发消息引用了 {target_id}，拉被引用消息取图")
-            return await self._fetch_image_by_message_id(target_id)
-
+                if str(seg.get("type") or "").lower() == "reply":
+                    data = seg.get("data") if isinstance(seg.get("data"), dict) else {}
+                    tid = data.get("target_message_id") or data.get("id") or seg.get("id")
+                    if tid and str(tid).strip():
+                        return str(tid).strip()
         return None
 
-    @staticmethod
-    def _scan_raw_for_binary(raw: Any) -> Optional[str]:
-        """从 raw_message（list[dict]）中找带 binary_data_base64 的 image/emoji 段"""
-        if not isinstance(raw, list):
-            return None
-        for seg in raw:
-            if not isinstance(seg, dict):
-                continue
-            stype = str(seg.get("type") or "").lower()
-            if stype not in ("image", "emoji"):
-                continue
-            b64 = seg.get("binary_data_base64")
-            if isinstance(b64, str) and b64:
-                return b64
-        return None
-
-    # ==================== 主入口 ====================
-
-    async def get_recent_image(self) -> Optional[str]:
-        """严格模式：仅从触发消息本身解析图片（base64），找不到返回 None。
-
-        查找顺序：
-        1. 当前消息含 image/emoji 段（直接 base64 或 hash → get_by_id 回填）
-        2. 当前消息含 reply 段 → 拉被引用消息取图
-
-        不再扫描聊天历史——LLM Tool 路径 SDK 未暴露触发 message_id，无法 100% 定位用户消息；
-        命令路径直接走 dctx.message。
-        """
+    async def _async_download_to_b64(self, url: str) -> Optional[str]:
+        """异步下载图片外链并转换为 Base64（带标准浏览器头与 8s 超时）。"""
         try:
-            message = self._current_message_obj(self.action)
+            async with httpx.AsyncClient(trust_env=False, timeout=8.0) as client:
+                resp = await client.get(url, headers=_BROWSER_HEADERS)
+                if resp.status_code == 200 and resp.content:
+                    return base64.b64encode(resp.content).decode("utf-8")
+        except Exception as exc:
+            logger.debug(f"{self.log_prefix} 外链图片下载略过: {exc}")
+        return None
 
-            if message is None:
-                logger.info(f"{self.log_prefix} 无触发消息上下文（Tool 路径），跳过图生图检测")
-                return None
+    # ==================== 前置防爆等比降采样 (Q3->A) ====================
 
-            if isinstance(message, dict):
-                hit = self._extract_image_from_current_dict(message)
-                if hit and not hit.startswith(("hash::", "reply::")):
-                    logger.info(f"{self.log_prefix} 从当前消息段直接取到图片（{len(hit)} bytes b64）")
-                    return hit
-                if hit and hit.startswith("hash::"):
-                    msg_id = message.get("message_id")
-                    h = hit.removeprefix("hash::")
-                    logger.info(f"{self.log_prefix} 当前消息有图片 hash={h[:16]}…，回拉本条消息取 binary")
-                    if isinstance(msg_id, str) and msg_id:
-                        refetched = await self._fetch_image_by_message_id(msg_id)
-                        if refetched:
-                            return refetched
-                if hit and hit.startswith("reply::"):
-                    target_id = hit.removeprefix("reply::")
-                    logger.info(f"{self.log_prefix} 检测到引用消息 target_message_id={target_id}，拉取被引用消息取图")
-                    refetched = await self._fetch_image_by_message_id(target_id)
-                    if refetched:
-                        return refetched
-                    logger.warning(f"{self.log_prefix} 被引用消息 {target_id} 取图失败")
+    def _downsample_image_if_needed(self, b64_str: str) -> str:
+        """长边 > 1200px 或体积 > 1.5MB 时，按等比缩放至最大边 1200px 质量 85 压缩。"""
+        if not b64_str:
+            return b64_str
+
+        try:
+            raw_bytes = base64.b64decode(b64_str)
+            # 惰性读取头部元数据（微秒级开销），精确判断真实分辨率
+            im = Image.open(io.BytesIO(raw_bytes))
+            w, h = im.size
+            needs_resize = max(w, h) > 1200
+            needs_compress = len(raw_bytes) > 1.5 * 1024 * 1024
+
+            if not needs_resize and not needs_compress:
+                return b64_str
+
+            if needs_resize:
+                scale = 1200.0 / max(w, h)
+                new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+                im = im.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                logger.info(f"{self.log_prefix} 图片尺寸防爆降采样: ({w}x{h}) -> ({new_w}x{new_h})")
+
+            buf = io.BytesIO()
+            if im.mode in ("RGBA", "P"):
+                im.save(buf, format="PNG", optimize=True)
             else:
-                hit = self._extract_image_from_legacy_seg(message)
-                if hit:
-                    return hit
+                if im.mode != "RGB":
+                    im = im.convert("RGB")
+                im.save(buf, format="JPEG", quality=85, optimize=True)
 
-            logger.info(f"{self.log_prefix} 触发消息中未找到图片，走文生图")
-            return None
-
-        except Exception as e:
-            logger.error(f"{self.log_prefix} 获取图片失败: {e!r}", exc_info=True)
-            return None
+            compressed_bytes = buf.getvalue()
+            logger.info(f"{self.log_prefix} 图片体积优化: {len(raw_bytes)} bytes -> {len(compressed_bytes)} bytes")
+            return base64.b64encode(compressed_bytes).decode("utf-8")
+        except Exception as exc:
+            logger.debug(f"{self.log_prefix} 等比降采样略过: {exc}")
+            return b64_str
 
     # ==================== 兼容旧 API ====================
 
     def find_and_return_emoji_in_message(self, message_segments) -> List[str]:
-        """从消息中查找并返回表情包/图片的 base64 数据列表（老 Seg 树兼容）"""
+        """老 Seg 树兼容。"""
         emoji_base64_list: List[str] = []
-
-        if isinstance(message_segments, Seg):
-            if message_segments.type in ("emoji", "image"):
-                if isinstance(message_segments.data, str):
-                    emoji_base64_list.append(message_segments.data)
+        if Seg is not None and isinstance(message_segments, Seg):
+            if message_segments.type in ("emoji", "image") and isinstance(message_segments.data, str):
+                emoji_base64_list.append(message_segments.data)
             elif message_segments.type == "seglist":
                 emoji_base64_list.extend(self.find_and_return_emoji_in_message(message_segments.data))
             return emoji_base64_list
 
         if isinstance(message_segments, (list, tuple)):
             for seg in message_segments:
-                if not isinstance(seg, Seg):
-                    continue
-                if seg.type in ("emoji", "image"):
-                    if isinstance(seg.data, str):
+                if Seg is not None and isinstance(seg, Seg):
+                    if seg.type in ("emoji", "image") and isinstance(seg.data, str):
                         emoji_base64_list.append(seg.data)
-                elif seg.type == "seglist":
-                    emoji_base64_list.extend(self.find_and_return_emoji_in_message(seg.data))
+                    elif seg.type == "seglist":
+                        emoji_base64_list.extend(self.find_and_return_emoji_in_message(seg.data))
         return emoji_base64_list
 
-    # ==================== 通用工具 ====================
-
     def download_and_encode_base64(self, image_url: str, proxy_url: str = None) -> Tuple[bool, str]:
-        """下载图片或处理 Base64 数据 URL
-
-        Args:
-            image_url: 图片 URL 或 data:image/ 数据 URL
-            proxy_url: 代理地址（如 http://127.0.0.1:7890），为空则直连
-        """
-        logger.info(f"{self.log_prefix} (B64) 处理图片: {image_url[:50]}...")
-
+        """下载图片或处理 Base64 数据 URL（保持公共方法兼容）。"""
         try:
-            if image_url.startswith('data:image/'):
-                logger.info(f"{self.log_prefix} (B64) 检测到 Base64 数据 URL")
-                if ';base64,' in image_url:
-                    base64_data = image_url.split(';base64,', 1)[1]
-                    logger.info(f"{self.log_prefix} (B64) 提取完成, 长度: {len(base64_data)}")
-                    return True, base64_data
-                error_msg = "Base64 数据 URL 格式不正确"
-                logger.error(f"{self.log_prefix} (B64) {error_msg}")
-                return False, error_msg
-
+            if image_url.startswith("data:image/"):
+                if ";base64," in image_url:
+                    return True, image_url.split(";base64,", 1)[1]
+                return False, "Base64 数据 URL 格式不正确"
             if proxy_url:
                 import requests
-                logger.info(f"{self.log_prefix} (B64) 下载 HTTP 图片 (proxy: {proxy_url})")
-                resp = requests.get(image_url, timeout=180, proxies={"http": proxy_url, "https": proxy_url})
+                resp = requests.get(image_url, timeout=180, proxies={"http": proxy_url, "https": proxy_url}, headers=_BROWSER_HEADERS)
                 if resp.status_code == 200:
-                    base64_encoded_image = base64.b64encode(resp.content).decode("utf-8")
-                    logger.info(f"{self.log_prefix} (B64) 下载编码完成, 长度: {len(base64_encoded_image)}")
-                    return True, base64_encoded_image
-                error_msg = f"下载图片失败 (状态: {resp.status_code})"
-                logger.error(f"{self.log_prefix} (B64) {error_msg} URL: {image_url[:30]}...")
-                return False, error_msg
-
-            logger.info(f"{self.log_prefix} (B64) 下载 HTTP 图片")
-            with urllib.request.urlopen(image_url, timeout=180) as response:
+                    return True, base64.b64encode(resp.content).decode("utf-8")
+                return False, f"下载失败: {resp.status_code}"
+            req = urllib.request.Request(image_url, headers=_BROWSER_HEADERS)
+            with urllib.request.urlopen(req, timeout=180) as response:
                 if response.status == 200:
-                    image_bytes = response.read()
-                    base64_encoded_image = base64.b64encode(image_bytes).decode("utf-8")
-                    logger.info(f"{self.log_prefix} (B64) 下载编码完成, 长度: {len(base64_encoded_image)}")
-                    return True, base64_encoded_image
-                error_msg = f"下载图片失败 (状态: {response.status})"
-                logger.error(f"{self.log_prefix} (B64) {error_msg} URL: {image_url[:30]}...")
-                return False, error_msg
-
+                    return True, base64.b64encode(response.read()).decode("utf-8")
+                return False, f"下载失败: {response.status}"
         except Exception as e:
-            logger.error(f"{self.log_prefix} (B64) 处理图片时错误: {e!r}", exc_info=True)
-            traceback.print_exc()
-            return False, f"处理图片时发生错误: {str(e)[:50]}"
+            return False, str(e)[:50]
 
-    def process_api_response(self, result) -> Optional[str]:
-        """统一处理 API 响应，提取图片数据"""
+    def process_api_response(self, result: Any) -> Optional[str]:
+        """统一处理 API 响应，提取图片数据。"""
         try:
             if isinstance(result, str):
                 return result
-
             if isinstance(result, dict):
-                for key in ['url', 'image', 'b64_json', 'data']:
+                for key in ["url", "image", "b64_json", "data"]:
                     if key in result and result[key]:
                         return result[key]
-
-                if 'output' in result and isinstance(result['output'], dict):
-                    output = result['output']
-                    for key in ['image_url', 'images']:
-                        if key in output:
-                            data = output[key]
+                if "output" in result and isinstance(result["output"], dict):
+                    out = result["output"]
+                    for key in ["image_url", "images"]:
+                        if key in out:
+                            data = out[key]
                             return data[0] if isinstance(data, list) and data else data
-
             return None
-        except Exception as e:
-            logger.error(f"{self.log_prefix} 处理 API 响应失败: {str(e)[:50]}")
+        except Exception:
             return None

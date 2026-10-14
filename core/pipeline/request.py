@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 
 SourceLiteral = Literal[
@@ -31,7 +31,12 @@ class GenerationRequest:
     size: str = ""
     strength: Optional[float] = None
     input_image_base64: Optional[str] = None
+    input_images_base64: List[str] = field(default_factory=list)
     extra_negative_prompt: Optional[str] = None
+
+    # 视角与视觉意象 (1A + 3A)
+    viewpoint: Literal["selfie", "pov"] = "selfie"
+    visual_scene: str = ""
 
     # 自拍相关
     is_selfie: bool = False
@@ -75,3 +80,12 @@ class GenerationRequest:
 
     # ==================== 调试 / 额外字段 ====================
     extras: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # 单图与多图列表双向无感兼容
+        if self.input_images_base64 and not self.input_image_base64:
+            self.input_image_base64 = self.input_images_base64[0]
+        elif self.input_image_base64 and not self.input_images_base64:
+            self.input_images_base64 = [self.input_image_base64]
+        if self.input_image_base64 or self.input_images_base64:
+            self.is_img2img = True

@@ -2,7 +2,7 @@
 import asyncio
 import base64
 import logging
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 
 from .client_context import ClientContext
 
@@ -133,7 +133,9 @@ class BaseApiClient:
         size: str,
         strength: float = None,
         input_image_base64: str = None,
-        max_retries: int = 2
+        max_retries: int = 2,
+        input_images_base64: Optional[List[str]] = None,
+        **kwargs: Any,
     ) -> Tuple[bool, str]:
         """生成图片的基础方法，带重试逻辑
 
@@ -157,14 +159,16 @@ class BaseApiClient:
 
                 logger.debug(f"{self.log_prefix} 开始API调用（尝试 {attempt + 1}/{total_attempts}）")
 
-                # 调用具体实现
+                # 调用具体实现（透传单图与多图列表）
                 success, result = await asyncio.to_thread(
                     self._make_request,
                     prompt=prompt,
                     model_config=model_config,
                     size=size,
                     strength=strength,
-                    input_image_base64=input_image_base64
+                    input_image_base64=input_image_base64,
+                    input_images_base64=input_images_base64,
+                    **kwargs,
                 )
 
                 if success:
@@ -203,7 +207,9 @@ class BaseApiClient:
         model_config: Dict[str, Any],
         size: str,
         strength: float = None,
-        input_image_base64: str = None
+        input_image_base64: str = None,
+        input_images_base64: Optional[List[str]] = None,
+        **kwargs: Any,
     ) -> Tuple[bool, str]:
         """具体的请求实现，子类必须实现此方法
 

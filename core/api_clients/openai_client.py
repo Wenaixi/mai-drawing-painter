@@ -5,7 +5,7 @@
 import json
 import urllib.request
 import traceback
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional, List
 
 from .base_client import BaseApiClient, logger
 
@@ -21,7 +21,9 @@ class OpenAIClient(BaseApiClient):
         model_config: Dict[str, Any],
         size: str,
         strength: float = None,
-        input_image_base64: str = None
+        input_image_base64: str = None,
+        input_images_base64: Optional[List[str]] = None,
+        **kwargs: Any,
     ) -> Tuple[bool, str]:
         """发送OpenAI格式的HTTP请求生成图片"""
         base_url = model_config.get("base_url", "")
@@ -35,8 +37,13 @@ class OpenAIClient(BaseApiClient):
         # 也支持智谱 GLM（base_url=https://open.bigmodel.cn/api/paas/v4）、
         # 模力方舟（base_url=https://ai.gitee.com/v1）等非 /v1 结尾的平台。
         base = base_url.rstrip("/")
+        has_multi = bool(input_images_base64 and len(input_images_base64) > 1)
+        has_single = bool(input_image_base64 or (input_images_base64 and len(input_images_base64) == 1))
+
         if base.endswith(("/images/generations", "/images/edits")):
             endpoint = base
+        elif has_multi or has_single:
+            endpoint = f"{base}/images/edits"
         else:
             endpoint = f"{base}/images/generations"
 
@@ -64,9 +71,18 @@ class OpenAIClient(BaseApiClient):
         if seed is not None and seed != -1:
             payload_dict["seed"] = seed
 
-        # 如果有输入图片，添加图生图参数
-        if input_image_base64:
-            image_data_uri = self._prepare_image_data_uri(input_image_base64)
+        # 如果有单张或多张输入图片，添加对应编辑参数
+        if has_multi:
+            # 官方多图编辑规范：传入 images 数组
+            payload_dict["images"] = [
+                {"image_url": self._prepare_image_data_uri(b64)}
+                for b64 in input_images_base64
+            ]
+            if strength is not None:
+                payload_dict["strength"] = strength
+        elif has_single:
+            single_b64 = input_image_base64 or input_images_base64[0]
+            image_data_uri = self._prepare_image_data_uri(single_b64)
             payload_dict["image"] = image_data_uri
             if strength is not None:
                 payload_dict["strength"] = strength
@@ -112,7 +128,9 @@ class OpenAIClient(BaseApiClient):
         elif is_openai_official:
             # OpenAI官方：只保留标准参数
             standard_params = ["model", "prompt", "size", "n", "quality", "style", "response_format"]
-            if input_image_base64:
+            if has_multi:
+                standard_params.extend(["images", "strength"])
+            elif has_single:
                 standard_params.extend(["image", "strength"])
             payload_dict = {k: v for k, v in payload_dict.items() if k in standard_params}
             logger.debug(f"{self.log_prefix} (OpenAI) 检测到OpenAI官方平台，仅使用标准参数")
@@ -265,3 +283,7 @@ class OpenAIClient(BaseApiClient):
                 return f"[BASE64_DATA_LEN:{len(response_body)}]"
         # 其他情况返回原样
         return response_body
+
+
+# 向后兼容别名
+OpenAiClient = OpenAIClient

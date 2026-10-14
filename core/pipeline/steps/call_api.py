@@ -51,6 +51,7 @@ class CallApi(BaseStep):
                 strength=req.strength,
                 input_image_base64=req.input_image_base64,
                 max_retries=max_retries,
+                input_images_base64=req.input_images_base64,
             )
         except Exception as e:
             logger.error(f"{req.log_prefix} 异步请求执行失败: {e!r}", exc_info=True)
