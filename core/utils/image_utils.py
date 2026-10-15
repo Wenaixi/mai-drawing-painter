@@ -113,7 +113,7 @@ class ImageProcessor:
         for b64 in combined:
             if not b64 or not isinstance(b64, str):
                 continue
-            h = hashlib.md5(b64.encode("utf-8")[:1024]).hexdigest()
+            h = hashlib.md5(b64.encode("utf-8")).hexdigest()
             if h not in seen_hashes:
                 seen_hashes.add(h)
                 deduped.append(b64)
@@ -224,6 +224,17 @@ class ImageProcessor:
                 except Exception:
                     pass
 
+        # 4. 如果是 bface 原创大表情，尝试提取 package_id 与 id，并通过腾讯 CDN 动态直链补拉
+        if stype == "bface":
+            pkg_id, face_id = self._extract_bface_info(seg)
+            if pkg_id and face_id:
+                cdn_url = f"https://gxh.vip.qq.com/club/item/parcel/item/{pkg_id[:2]}/{pkg_id}/126x126/{face_id}.png"
+                downloaded = await self._async_download_to_b64(cdn_url)
+                if downloaded:
+                    logger.info(f"{self.log_prefix} bface 原创大表情 CDN 自动补拉成功 (pkg={pkg_id}, id={face_id})")
+                    return downloaded
+                logger.info(f"{self.log_prefix} 识别到原创大表情 bface (pkg={pkg_id}, id={face_id})，未附带直接下载直链")
+
         return None
 
     def _extract_reply_target_id(self, message: Any) -> Optional[str]:
@@ -285,8 +296,12 @@ class ImageProcessor:
                 logger.info(f"{self.log_prefix} 图片尺寸防爆降采样: ({w}x{h}) -> ({new_w}x{new_h})")
 
             buf = io.BytesIO()
-            if im.mode in ("RGBA", "P"):
-                im.save(buf, format="PNG", optimize=True)
+            if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in getattr(im, "info", {})):
+                # 合成白底后转 RGB JPEG，消除无损 PNG 体积膨胀，将单张体积严格压制在 300KB 内
+                bg = Image.new("RGB", im.size, (255, 255, 255))
+                alpha_mask = im.convert("RGBA").split()[-1]
+                bg.paste(im, mask=alpha_mask)
+                bg.save(buf, format="JPEG", quality=85, optimize=True)
             else:
                 if im.mode != "RGB":
                     im = im.convert("RGB")
