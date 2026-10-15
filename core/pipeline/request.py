@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, InitVar
 from typing import Any, Dict, List, Literal, Optional
 
 
@@ -31,6 +31,7 @@ class GenerationRequest:
     size: str = ""
     strength: Optional[float] = None
     input_images_base64: List[str] = field(default_factory=list)
+    input_image_base64: InitVar[Optional[str]] = None
     extra_negative_prompt: Optional[str] = None
 
     # 视角与视觉意象 (1A + 3A)
@@ -79,6 +80,11 @@ class GenerationRequest:
     # ==================== 调试 / 额外字段 ====================
     extras: Dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self, input_image_base64: Optional[str] = None) -> None:
+        """标准 dataclass post-init：平滑吸收 InitVar 单图入参。"""
+        if input_image_base64 and not self.input_images_base64:
+            self.input_images_base64 = [input_image_base64]
+
     @property
     def input_image_base64(self) -> Optional[str]:
         """向下兼容单图属性：返回多图列表中第一张图。"""
@@ -96,27 +102,3 @@ class GenerationRequest:
     def is_img2img(self) -> bool:
         """是否图生图请求：多图列表非空即是。"""
         return bool(self.input_images_base64)
-
-    @is_img2img.setter
-    def is_img2img(self, val: bool) -> None:
-        """允许外部设置或兼容历史调用。"""
-        pass
-
-
-# 模块级兼容补丁：允许历史调用方以 input_image_base64 关键字参数构造
-_orig_req_init = GenerationRequest.__init__
-
-
-def _compat_req_init(self, *args, **kwargs):
-    legacy_single = kwargs.pop("input_image_base64", None)
-    if "input_images_base64" not in kwargs:
-        if legacy_single:
-            kwargs["input_images_base64"] = [legacy_single]
-        else:
-            kwargs["input_images_base64"] = []
-    elif legacy_single and not kwargs["input_images_base64"]:
-        kwargs["input_images_base64"] = [legacy_single]
-    _orig_req_init(self, *args, **kwargs)
-
-
-GenerationRequest.__init__ = _compat_req_init
