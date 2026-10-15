@@ -64,7 +64,6 @@ class GenerationRequest:
     selfie_negative_prompt: Optional[str] = None
     llm_chosen_size: Optional[str] = None
     final_size: str = ""
-    is_img2img: bool = False
     raw_api_result: Any = None
     parsed_image_data: Optional[str] = None
     resolved_image_data: Optional[str] = None
@@ -97,6 +96,11 @@ class GenerationRequest:
     def is_img2img(self) -> bool:
         """是否图生图请求：多图列表非空即是。"""
         return bool(self.input_images_base64)
+
+    @is_img2img.setter
+    def is_img2img(self, val: bool) -> None:
+        """允许外部设置或兼容历史调用。"""
+        pass
 
 
 # 模块级兼容补丁：允许历史调用方以 input_image_base64 关键字参数构造
