@@ -135,7 +135,6 @@ class BaseApiClient:
         input_image_base64: str = None,
         max_retries: int = 2,
         input_images_base64: Optional[List[str]] = None,
-        **kwargs: Any,
     ) -> Tuple[bool, str]:
         """生成图片的基础方法，带重试逻辑
 
@@ -168,7 +167,6 @@ class BaseApiClient:
                     strength=strength,
                     input_image_base64=input_image_base64,
                     input_images_base64=input_images_base64,
-                    **kwargs,
                 )
 
                 if success:
@@ -209,7 +207,6 @@ class BaseApiClient:
         strength: float = None,
         input_image_base64: str = None,
         input_images_base64: Optional[List[str]] = None,
-        **kwargs: Any,
     ) -> Tuple[bool, str]:
         """具体的请求实现，子类必须实现此方法
 

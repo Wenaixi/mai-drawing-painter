@@ -84,10 +84,14 @@ class ImageProcessor:
         if target_msg_id and ctx and hasattr(ctx, "message") and hasattr(ctx.message, "get_by_id"):
             try:
                 logger.info(f"{self.log_prefix} 检测到引用消息 target_id={target_msg_id}，拉取被引用消息...")
-                target_msg = await ctx.message.get_by_id(
-                    message_id=target_msg_id,
-                    chat_id=chat_id or "",
-                    include_binary_data=True,
+                import asyncio
+                target_msg = await asyncio.wait_for(
+                    ctx.message.get_by_id(
+                        message_id=target_msg_id,
+                        chat_id=chat_id or "",
+                        include_binary_data=True,
+                    ),
+                    timeout=5.0,
                 )
                 if isinstance(target_msg, dict):
                     target_images = await self._collect_images_from_msg(target_msg, ctx=ctx)
@@ -168,6 +172,13 @@ class ImageProcessor:
                 collected.extend(self.find_and_return_emoji_in_message(seg))
 
         return collected
+
+    def _extract_bface_info(self, seg: dict) -> Tuple[str, str]:
+        """从 bface 原创大表情段中提取 package_id 与 id 特征。"""
+        data = seg.get("data") if isinstance(seg.get("data"), dict) else {}
+        pkg_id = str(data.get("package_id") or seg.get("package_id") or "")
+        face_id = str(data.get("id") or data.get("p_id") or seg.get("id") or "")
+        return pkg_id, face_id
 
     async def _resolve_segment_to_b64(self, seg: dict, ctx: Any = None) -> Optional[str]:
         """将单个消息段解析为纯 Base64 字符串（全面兼容 image, emoji, mface, bface, dict）。"""

@@ -30,7 +30,6 @@ class GenerationRequest:
     model_id: str = ""
     size: str = ""
     strength: Optional[float] = None
-    input_image_base64: Optional[str] = None
     input_images_base64: List[str] = field(default_factory=list)
     extra_negative_prompt: Optional[str] = None
 
@@ -81,11 +80,39 @@ class GenerationRequest:
     # ==================== 调试 / 额外字段 ====================
     extras: Dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        # 单图与多图列表双向无感兼容
-        if self.input_images_base64 and not self.input_image_base64:
-            self.input_image_base64 = self.input_images_base64[0]
-        elif self.input_image_base64 and not self.input_images_base64:
-            self.input_images_base64 = [self.input_image_base64]
-        if self.input_image_base64 or self.input_images_base64:
-            self.is_img2img = True
+    @property
+    def input_image_base64(self) -> Optional[str]:
+        """向下兼容单图属性：返回多图列表中第一张图。"""
+        return self.input_images_base64[0] if self.input_images_base64 else None
+
+    @input_image_base64.setter
+    def input_image_base64(self, val: Optional[str]) -> None:
+        """向下兼容单图设值：同步更新多图列表。"""
+        if val:
+            self.input_images_base64 = [val]
+        else:
+            self.input_images_base64 = []
+
+    @property
+    def is_img2img(self) -> bool:
+        """是否图生图请求：多图列表非空即是。"""
+        return bool(self.input_images_base64)
+
+
+# 模块级兼容补丁：允许历史调用方以 input_image_base64 关键字参数构造
+_orig_req_init = GenerationRequest.__init__
+
+
+def _compat_req_init(self, *args, **kwargs):
+    legacy_single = kwargs.pop("input_image_base64", None)
+    if "input_images_base64" not in kwargs:
+        if legacy_single:
+            kwargs["input_images_base64"] = [legacy_single]
+        else:
+            kwargs["input_images_base64"] = []
+    elif legacy_single and not kwargs["input_images_base64"]:
+        kwargs["input_images_base64"] = [legacy_single]
+    _orig_req_init(self, *args, **kwargs)
+
+
+GenerationRequest.__init__ = _compat_req_init

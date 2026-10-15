@@ -23,7 +23,6 @@ class OpenAIClient(BaseApiClient):
         strength: float = None,
         input_image_base64: str = None,
         input_images_base64: Optional[List[str]] = None,
-        **kwargs: Any,
     ) -> Tuple[bool, str]:
         """发送OpenAI格式的HTTP请求生成图片"""
         base_url = model_config.get("base_url", "")
@@ -285,5 +284,4 @@ class OpenAIClient(BaseApiClient):
         return response_body
 
 
-# 向后兼容别名
-OpenAiClient = OpenAIClient
+# 客户端类定义完毕
