@@ -102,3 +102,7 @@ class GenerationRequest:
     def is_img2img(self) -> bool:
         """是否图生图请求：多图列表非空即是。"""
         return bool(self.input_images_base64)
+
+    @is_img2img.setter
+    def is_img2img(self, val: bool) -> None:
+        """兼容历史赋值：is_img2img 由 input_images_base64 派生，赋值仅作兼容保留。"""
