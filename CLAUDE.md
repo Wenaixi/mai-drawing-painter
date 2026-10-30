@@ -121,3 +121,8 @@
   - 前置等比防爆降采样护城河 (image_utils.py: _downsample_image_if_needed)：长边 > 1200px 或体积 > 1.5MB 自动缩放至 1200px 质量 85，单张约 300KB，彻底阻断宿主 OOM 危机；
   - 拟人视角智能分流联动 (GenerationRequest: viewpoint & visual_scene)：与上帝引擎端到端打通，viewpoint == "pov" 时生成纯写实生活景物/静物抓拍，viewpoint == "selfie" 时合入波奇底模生活自拍；
   - 本地测试套件 tests/test_image_extraction.py 与 tests/test_command_multi_image.py 全部 100% 满分通过，本地提交 7396f99。
+
+- 2026-10-30: 修复 is_img2img setter 缺失导致说说配图全部失败的回归
+  - **根因**：commit 33857d5 重构 GenerationRequest 时删除了 is_img2img 的 setter（原本由 eb3206d 为 property 兼容性补上）。而 `detect_img2img_fallback.py` 仍执行 `req.is_img2img = req.input_image_base64 is not None`，写入纯 property（无 setter）时抛 `AttributeError("property 'is_img2img' of 'GenerationRequest' object has no setter")`，流水线在 img2img 回退检测步骤直接异常，导致 MaiTrace 调用绘卷 `generate_image` 每次出图都失败，说说只能发纯文本。
+  - **修复**：在 request.py 恢复 `is_img2img.setter`（空兼容保留，实际仍由 input_images_base64 派生），本地提交 324d8e3，已同步到安卓虚拟机 Podroid /mnt/mbimg 并重启 maim-bot-core 生效。
+  - **验证**：重启后新日志 `grep is_img2img` 为 0 匹配，容器稳定运行。
