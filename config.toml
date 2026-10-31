@@ -1,6 +1,6 @@
 [plugin]
 name = "麦麦绘卷"
-config_version = "4.2.0"
+config_version = "0.1.0"
 enabled = true
 
 [basic]
