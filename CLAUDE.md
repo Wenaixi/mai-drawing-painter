@@ -126,3 +126,14 @@
   - **根因**：commit 33857d5 重构 GenerationRequest 时删除了 is_img2img 的 setter（原本由 eb3206d 为 property 兼容性补上）。而 `detect_img2img_fallback.py` 仍执行 `req.is_img2img = req.input_image_base64 is not None`，写入纯 property（无 setter）时抛 `AttributeError("property 'is_img2img' of 'GenerationRequest' object has no setter")`，流水线在 img2img 回退检测步骤直接异常，导致 MaiTrace 调用绘卷 `generate_image` 每次出图都失败，说说只能发纯文本。
   - **修复**：在 request.py 恢复 `is_img2img.setter`（空兼容保留，实际仍由 input_images_base64 派生），本地提交 324d8e3，已同步到安卓虚拟机 Podroid /mnt/mbimg 并重启 maim-bot-core 生效。
   - **验证**：重启后新日志 `grep is_img2img` 为 0 匹配，容器稳定运行。
+
+- 2026-10-31: 修复纯直连无代理模式下生图超时与 403 拦截，解决说说无配图问题
+  - **根因**：日志显示发说说配图重试 3 次均失败后降级为纯文本说说。深入排查发现两大根因：
+    1. `api.wenxi.dev` 为双栈域名，Docker 容器内缺乏 IPv6 默认路由，Python 原生 `urllib` 默认优先连接 IPv6，触发 `[Errno 101] Network unreachable` 握手超时死锁；
+    2. 原代码未设置 `User-Agent` 请求头，默认携带的 `Python-urllib/3.13` 被 Cloudflare 防火墙判定为爬虫特征，直接拦截报 `HTTP 403 Forbidden (error code: 1010)`。
+  - **修复**：
+    1. 保持纯直连模式（`proxy.enabled = false`，不使用代理）；
+    2. 在 `openai_client.py` 注入 IPv4 优先解析防御补丁，过滤 `socket.getaddrinfo` 消除 IPv6 路由死锁；
+    3. 请求头注入标准现代浏览器 `User-Agent`，彻底消除 Cloudflare Error 1010 拦截；
+    4. 确保请求超时时间放宽至 180 秒。
+  - **验证**：单元测试 12 项全绿。

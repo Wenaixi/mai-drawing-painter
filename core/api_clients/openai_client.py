@@ -3,8 +3,17 @@
 支持：OpenAI官方、硅基流动、NewAPI、火山方舟等兼容OpenAI格式的服务
 """
 import json
+import socket
 import urllib.request
 import traceback
+
+# 防御容器环境缺乏 IPv6 默认路由导致的 [Errno 101] Network unreachable
+_orig_getaddrinfo = socket.getaddrinfo
+def _ipv4_first_getaddrinfo(*args, **kwargs):
+    responses = _orig_getaddrinfo(*args, **kwargs)
+    ipv4_res = [r for r in responses if r[0] == socket.AF_INET]
+    return ipv4_res if ipv4_res else responses
+socket.getaddrinfo = _ipv4_first_getaddrinfo
 from typing import Dict, Any, Tuple, Optional, List
 
 from .base_client import BaseApiClient, logger
@@ -141,10 +150,13 @@ class OpenAIClient(BaseApiClient):
             logger.debug(f"{self.log_prefix} (OpenAI) 检测到Grok平台，仅保留支持的参数")
 
         data = json.dumps(payload_dict).encode("utf-8")
+        # 确保带上规范 Bearer 格式与现代浏览器 User-Agent，防御 Cloudflare Error 1010
+        auth_header = generate_api_key if generate_api_key.startswith("Bearer ") else f"Bearer {generate_api_key}"
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "Authorization": f"{generate_api_key}",
+            "Authorization": auth_header,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         }
 
         # 详细调试信息
@@ -186,7 +198,7 @@ class OpenAIClient(BaseApiClient):
                 timeout = proxy_config.get('timeout', 600)
             else:
                 opener = urllib.request.build_opener()
-                timeout = 600
+                timeout = 180
 
             with opener.open(req, timeout=timeout) as response:
                 response_status = response.status
