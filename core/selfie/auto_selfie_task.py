@@ -264,6 +264,7 @@ class AutoSelfieTask:
                     "Rabbit-Jia-Er.MaiTrace.send_feed_api",
                     message=caption,
                     images=[image_b64],
+                    allow_plugin_call=True,
                 )
             except Exception as exc:
                 logger.warning(
