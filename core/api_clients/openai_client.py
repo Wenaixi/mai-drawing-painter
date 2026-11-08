@@ -73,6 +73,11 @@ class OpenAIClient(BaseApiClient):
             "n": 1,
         }
 
+        # 图片返回格式：默认要求 b64_json（避免生成后还要去外部 CDN 拉图，
+        # 部分网络环境拉不回如 65535.space 等中转图床）。个别不支持 b64_json
+        # 的平台可在模型配置里显式设 "response_format": "url" 覆写。
+        payload_dict["response_format"] = model_config.get("response_format", "b64_json")
+
         # 添加可选参数
         if negative_prompt:
             payload_dict["negative_prompt"] = negative_prompt
