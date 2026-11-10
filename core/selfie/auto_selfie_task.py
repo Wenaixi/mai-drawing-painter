@@ -209,14 +209,32 @@ class AutoSelfieTask:
     # ==================== 工具 ====================
 
     def _load_reference_image(self) -> Optional[str]:
-        """加载参考图，按 (path, mtime) 缓存 base64，避免每次重 encode"""
+        """加载参考图，按 (path, mtime) 缓存 base64，避免每次重 encode。
+
+        支持文件路径；目录路径则按当天日期固定选一张（当天同一张、跨天轮换）。
+        """
         path = (self.plugin.config.selfie.reference_image_path or "").strip()
         if not path:
             return None
         try:
             if not os.path.isabs(path):
                 path = os.path.join(self.plugin.plugin_dir, path)
-            if not os.path.exists(path):
+            if os.path.isdir(path):
+                try:
+                    entries = sorted(
+                        f for f in os.listdir(path)
+                        if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".jfif", ".gif"))
+                    )
+                except OSError:
+                    entries = []
+                if not entries:
+                    logger.warning(f"[AutoSelfie] 自拍参考图目录为空: {path}")
+                    self._ref_cache = None
+                    return None
+                day_num = datetime.datetime.now().toordinal()
+                path = os.path.join(path, entries[day_num % len(entries)])
+                logger.info(f"[AutoSelfie] 参考图目录按当日选择: {path}")
+            elif not os.path.exists(path):
                 logger.warning(f"[AutoSelfie] 自拍参考图片文件不存在: {path}")
                 self._ref_cache = None
                 return None

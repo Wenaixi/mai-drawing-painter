@@ -216,6 +216,10 @@ def _build_log_prefix(kwargs: Dict[str, Any]) -> str:
 def _load_selfie_reference_image(plugin: "MaisArtPlugin", log_prefix: str) -> Optional[str]:
     """加载 selfie.reference_image_path 指定的参考图，返回 base64 或 None。
 
+    支持两种路径形态：
+    - 文件路径：直接加载该文件。
+    - 目录路径：按「当天日期」从目录里挑一张固定图（当天恒定同一张，
+      跨天自然轮换），保证一天内人物/场景参考一致。
     按 (abs_path, mtime) 缓存，mtime 不变时直接复用 base64，避免每次重 encode。
     """
     global _selfie_ref_cache
@@ -226,7 +230,24 @@ def _load_selfie_reference_image(plugin: "MaisArtPlugin", log_prefix: str) -> Op
     try:
         if not os.path.isabs(path):
             path = os.path.join(plugin.plugin_dir, path)
-        if not os.path.exists(path):
+        if os.path.isdir(path):
+            # 目录形态：按日期选固定一张（当天同一张、跨天轮换）
+            import datetime as _dt
+            try:
+                entries = sorted(
+                    f for f in os.listdir(path)
+                    if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".jfif", ".gif"))
+                )
+            except OSError:
+                entries = []
+            if not entries:
+                logger.warning(f"{log_prefix} 自拍参考图目录为空: {path}")
+                _selfie_ref_cache = None
+                return None
+            day_num = _dt.date.today().toordinal()
+            path = os.path.join(path, entries[day_num % len(entries)])
+            logger.info(f"{log_prefix} 参考图目录按当日选择: {path}")
+        elif not os.path.exists(path):
             logger.warning(f"{log_prefix} 自拍参考图片文件不存在: {path}")
             _selfie_ref_cache = None
             return None
